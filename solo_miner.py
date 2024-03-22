@@ -158,7 +158,7 @@ def bitcoin_miner(t, restarted=False):
     logg('[*] Working to solve block with height {}'.format(work_on+1))
 
     nNonce = 0 
-    nonce_bit = 2 ** 20 # nonce array range
+    nonce_bit = 2 ** int(sys.argv[2]) # nonce array range
     last_nonce = nonce_bit
 
     nonces = np.arange(nNonce, nonce_bit)
@@ -169,6 +169,7 @@ def bitcoin_miner(t, restarted=False):
         '000000800000000000000000000000000000000000000000000000000000000000000000000000000000000080020000'
         hash = hashlib.sha256(hashlib.sha256(binascii.unhexlify(blockheader)).digest()).digest()
         hash = binascii.hexlify(hash).decode()
+        print(f"target {target}, last Hash : {hash}")
         return hash, blockheader
     calc_hash = np.vectorize(calc_hash)
 
@@ -178,15 +179,15 @@ def bitcoin_miner(t, restarted=False):
             break
 
         if ctx.prevhash != ctx.updatedPrevHash:
-            logg('[*] New block {} detected on network '.format(ctx.prevhash))
-            logg('[*] Best difficulty will trying to solve block {} was {}'.format(work_on+1, ctx.nHeightDiff[work_on+1]))
+            print('[*] New block {} detected on network '.format(ctx.prevhash))
+            print('[*] Best difficulty will trying to solve block {} was {}'.format(work_on+1, ctx.nHeightDiff[work_on+1]))
             ctx.updatedPrevHash = ctx.prevhash
             bitcoin_miner(t, restarted=True)
             break 
 
         hashes, blockheaders = calc_hash(nonces)
 
-
+        print(hashes[len(hashes) - 1])
         # hash meter, only works with regular nonce.
 
         #last_updated = calculate_hashrate(nNonce, last_updated)
@@ -198,15 +199,15 @@ def bitcoin_miner(t, restarted=False):
             nonce_index = np.where(hashes < target)[0]
             nonce = nonces[nonce_index]
 
-            logg('[*] Block {} solved.'.format(work_on+1))
-            logg('[*] Block hash: {}'.format(hashes[nonce_index]))
-            logg('[*] Blockheader: {}'.format(blockheaders[nonce_index]))            
+            print('[*] Block {} solved.'.format(work_on+1))
+            print('[*] Block hash: {}'.format(hashes[nonce_index]))
+            print('[*] Blockheader: {}'.format(blockheaders[nonce_index]))            
             payload = bytes('{"params": ["'+address+'", "'+ctx.job_id+'", "'+ctx.extranonce2 \
                 +'", "'+ctx.ntime+'", "'+nonce+'"], "id": 1, "method": "mining.submit"}\n', 'utf-8')
-            logg('[*] Payload: {}'.format(payload))
+            print('[*] Payload: {}'.format(payload))
             ctx.sock.sendall(payload)
             ret = ctx.sock.recv(1024)
-            logg('[*] Pool response: {}'.format(ret))
+            print('[*] Pool response: {}'.format(ret))
             last_nonce = 0
             nonces = np.arange(0, nonce_bit)
             return True
@@ -254,7 +255,6 @@ def block_listener(t):
         response = b''
         while response.count(b'\n') < 4 and not(b'mining.notify' in response):response += sock.recv(1024)
         responses = [json.loads(res) for res in response.decode().split('\n') if len(res.strip())>0 and 'mining.notify' in res]     
-        print(responses[0]['params'])
 
         if responses[0]['params'][1] != ctx.prevhash:
             # new block detected on network 
