@@ -188,11 +188,6 @@ def bitcoin_miner(t, restarted=False):
         difficulty = _diff / int(hashes, 16)
 
 
-        if ctx.nHeightDiff[work_on+1] < difficulty:
-            # new best difficulty for block at x height
-            ctx.nHeightDiff[work_on+1] = difficulty
-        
-
         # hash meter, only works with regular nonce.
 
         #last_updated = calculate_hashrate(nNonce, last_updated)
