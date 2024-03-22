@@ -20,11 +20,11 @@ import json
 import sys
 import os
 
-
+import numpy as np
 
 
 # Replace this with your Bitcoin Address
-address = '1Q1Ten9ASaVMswFmvu64spJi96SojHCNWv'
+address = sys.argv[1]
 
 
 
@@ -157,24 +157,20 @@ def bitcoin_miner(t, restarted=False):
 
     logg('[*] Working to solve block with height {}'.format(work_on+1))
 
-
-
-
-
-    if len(sys.argv) > 1:
-        random_nonce = False 
-    else:
-        random_nonce = True
-
-    
-
     nNonce = 0 
+    nonce_bit = 2 ** 20 # nonce array range
+    last_nonce = nonce_bit
 
-
+    nonces = np.arange(nNonce, nonce_bit)
     last_updated = int(time.time())
-
-
-
+    def calc_hash(nonce):
+        nonce = hex(nonce)[2:].zfill(8)
+        blockheader = ctx.version + ctx.prevhash + merkle_root + ctx.ntime + ctx.nbits + nonce +\
+        '000000800000000000000000000000000000000000000000000000000000000000000000000000000000000080020000'
+        hash = hashlib.sha256(hashlib.sha256(binascii.unhexlify(blockheader)).digest()).digest()
+        hash = binascii.hexlify(hash).decode()
+        return hash, blockheader
+    calc_hash = np.vectorize(calc_hash)
 
     while True:
         t.check_self_shutdown()
@@ -188,30 +184,8 @@ def bitcoin_miner(t, restarted=False):
             bitcoin_miner(t, restarted=True)
             break 
 
-
-        if random_nonce:
-            nonce = hex(random.randint(0,2**32-1))[2:].zfill(8) # nNonce   #hex(int(nonce,16)+1)[2:]
-        else:
-            nonce = hex(nNonce)[2:].zfill(8)
-
-
-
-
-        blockheader = ctx.version + ctx.prevhash + merkle_root + ctx.ntime + ctx.nbits + nonce +\
-        '000000800000000000000000000000000000000000000000000000000000000000000000000000000000000080020000'
-        hash = hashlib.sha256(hashlib.sha256(binascii.unhexlify(blockheader)).digest()).digest()
-        hash = binascii.hexlify(hash).decode()
-
-
-
-        # Logg all hashes that start with 7 zeros or more
-        if hash.startswith('0000000'): logg('[*] New hash: {} for block {}'.format(hash, work_on+1))
-
-
-
-        this_hash = int(hash, 16)
-
-        difficulty = _diff / this_hash
+        hashes, blockheaders = calc_hash(nonces)
+        difficulty = _diff / int(hashes, 16)
 
 
         if ctx.nHeightDiff[work_on+1] < difficulty:
@@ -219,27 +193,34 @@ def bitcoin_miner(t, restarted=False):
             ctx.nHeightDiff[work_on+1] = difficulty
         
 
-        if not random_nonce:
-            # hash meter, only works with regular nonce.
-            last_updated = calculate_hashrate(nNonce, last_updated)
+        # hash meter, only works with regular nonce.
+
+        #last_updated = calculate_hashrate(nNonce, last_updated)
 
 
 
 
-        if hash < target :
+        if np.isin(hashes < target, True) :
+            nonce_index = np.where(hashes < target)[0]
+            nonce = nonces[nonce_index]
+
             logg('[*] Block {} solved.'.format(work_on+1))
-            logg('[*] Block hash: {}'.format(hash))
-            logg('[*] Blockheader: {}'.format(blockheader))            
+            logg('[*] Block hash: {}'.format(hashes[nonce_index]))
+            logg('[*] Blockheader: {}'.format(blockheaders[nonce_index]))            
             payload = bytes('{"params": ["'+address+'", "'+ctx.job_id+'", "'+ctx.extranonce2 \
                 +'", "'+ctx.ntime+'", "'+nonce+'"], "id": 1, "method": "mining.submit"}\n', 'utf-8')
             logg('[*] Payload: {}'.format(payload))
             ctx.sock.sendall(payload)
             ret = ctx.sock.recv(1024)
             logg('[*] Pool response: {}'.format(ret))
+            last_nonce = 0
+            nonces = np.arange(0, nonce_bit)
             return True
         
         # increment nonce by 1, in case we don't want random 
-        nNonce +=1
+        last_nonce += nonce_bit
+        nonces += nonce_bit
+        print(f"Last nonce : {last_nonce}")
 
 
 
@@ -279,7 +260,7 @@ def block_listener(t):
         response = b''
         while response.count(b'\n') < 4 and not(b'mining.notify' in response):response += sock.recv(1024)
         responses = [json.loads(res) for res in response.decode().split('\n') if len(res.strip())>0 and 'mining.notify' in res]     
-        
+        print(responses[0]['params'])
 
         if responses[0]['params'][1] != ctx.prevhash:
             # new block detected on network 
