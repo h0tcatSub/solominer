@@ -185,7 +185,6 @@ def bitcoin_miner(t, restarted=False):
             break 
 
         hashes, blockheaders = calc_hash(nonces)
-        difficulty = _diff / int(hashes, 16)
 
 
         # hash meter, only works with regular nonce.
