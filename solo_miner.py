@@ -194,7 +194,7 @@ def bitcoin_miner(t, restarted=False):
 
 
 
-        if np.isin(hashes < target, True) :
+        if not np.sum(hashes < target) == 0: 
             nonce_index = np.where(hashes < target)[0]
             nonce = nonces[nonce_index]
 
