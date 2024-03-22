@@ -114,11 +114,13 @@ class ExitedThread(threading.Thread):
 
 
 
+nonces = None
+working_now = False
 
+def bitcoin_miner(restarted=True):
 
-
-def bitcoin_miner(t, restarted=False):
-
+    global nonces
+    global working_now
     if restarted:
         logg('[*] Bitcoin Miner restarted')
         time.sleep(10)
@@ -148,21 +150,14 @@ def bitcoin_miner(t, restarted=False):
 
 
 
-    _diff = int("00000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", 16)
-
-    
-
-
-
-
     logg('[*] Working to solve block with height {}'.format(work_on+1))
 
-    nNonce = 0 
     nonce_bit = 2 ** int(sys.argv[2]) # nonce array range
     last_nonce = nonce_bit
-
-    nonces = np.arange(nNonce, nonce_bit)
-    last_updated = int(time.time())
+    
+    
+    nonces = np.arange(nonce_bit)
+    
     def calc_hash(nonce):
         nonce = hex(nonce)[2:].zfill(8)
         blockheader = ctx.version + ctx.prevhash + merkle_root + ctx.ntime + ctx.nbits + nonce +\
@@ -173,10 +168,6 @@ def bitcoin_miner(t, restarted=False):
     calc_hash = np.vectorize(calc_hash)
 
     while True:
-        t.check_self_shutdown()
-        if t.exit:
-            break
-
         if ctx.prevhash != ctx.updatedPrevHash:
             print('[*] New block {} detected on network '.format(ctx.prevhash))
             print('[*] Best difficulty will trying to solve block {} was {}'.format(work_on+1, ctx.nHeightDiff[work_on+1]))
@@ -191,14 +182,13 @@ def bitcoin_miner(t, restarted=False):
 
         #last_updated = calculate_hashrate(nNonce, last_updated)
 
-
-
-
-        if not np.sum(hashes < target) == 0: 
+        found_nonce = np.sum(np.isin(hashes<target, [True])) > 0
+        print(found_nonce)
+        if found_nonce: # You Win!
             nonce_index = np.where(hashes < target)[0]
             nonce = nonces[nonce_index]
 
-            print('[*] Block {} solved.'.format(work_on+1))
+            print('[yay!] Block {} solved.'.format(work_on+1))
             print('[*] Block hash: {}'.format(hashes[nonce_index]))
             print('[*] Blockheader: {}'.format(blockheaders[nonce_index]))            
             payload = bytes('{"params": ["'+address+'", "'+ctx.job_id+'", "'+ctx.extranonce2 \
@@ -206,9 +196,11 @@ def bitcoin_miner(t, restarted=False):
             print('[*] Payload: {}'.format(payload))
             ctx.sock.sendall(payload)
             ret = ctx.sock.recv(1024)
-            print('[*] Pool response: {}'.format(ret))
+            print('[yay!] Pool response: {}'.format(ret))
             last_nonce = 0
             nonces = np.arange(0, nonce_bit)
+            working_now = False
+            block_listener()
             return True
         
         # increment nonce by 1, in case we don't want random 
@@ -221,54 +213,53 @@ def bitcoin_miner(t, restarted=False):
        
 
 
-def block_listener(t):
-    
-    # init a connection to ckpool 
-    sock  = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect(('btc.viabtc.io', 3333))
-    # send a handle subscribe message 
-    sock.sendall(b'{"id": 1, "method": "mining.subscribe", "params": [""]}\n')
-    lines = sock.recv(1024).decode().split('\n')
-    response = json.loads(lines[0])
-    ctx.sub_details,ctx.extranonce1,ctx.extranonce2_size = response['result']
-    # send and handle authorize message  
-    sock.sendall(b'{"params": ["'+address.encode()+b'", "123"], "id": 2, "method": "mining.authorize"}\n')
-    response = b''
-    
-    while(True):
-        recv_payload = sock.recv(1024)
-        response += recv_payload
-        if(recv_payload.decode().endswith("true]}\n")) or (recv_payload.decode().endswith("false]}\n")):
-            break
-    print(response)
-    responses = [json.loads(res) for res in response.decode().split('\n') if len(res.strip())>0 and 'mining.notify' in res]
-    ctx.job_id, ctx.prevhash, ctx.coinb1, ctx.coinb2, ctx.merkle_branch, ctx.version, ctx.nbits, ctx.ntime, ctx.clean_jobs = responses[0]['params']
-    print("Start mining!")
-    print("======= Job Information =======")
-    print(f"job_id : {ctx.job_id}")
-    print(f"prev_hash : {ctx.prevhash}")
-    print(f"coinbase1 : {ctx.coinb1}")
-    print(f"coinbase2 : {ctx.coinb2}")
-    print(f"merkle_branch : {ctx.merkle_branch}")
-    print(f"version : {ctx.version}")
-    print(f"nbits : {ctx.nbits}")
-    print(f"ntime : {ctx.ntime}")
-    print(f"clean_jobs : {ctx.clean_jobs}")
-    # do this one time, will be overwriten by mining loop when new block is detected
-    ctx.updatedPrevHash = ctx.prevhash
-    # set sock 
-    ctx.sock = sock 
+def block_listener():
+    global working_now
 
-
-    while True:
-        t.check_self_shutdown()
-        if t.exit:
-            break
+    if not working_now:
+        # init a connection to ckpool 
+        sock  = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect(('bitcoin.viabtc.io', 3333))
+        # send a handle subscribe message 
+        sock.sendall(b'{"id": 1, "method": "mining.subscribe", "params": [""]}\n')
+        lines = sock.recv(1024).decode().split('\n')
+        response = json.loads(lines[0])
+        ctx.sub_details,ctx.extranonce1,ctx.extranonce2_size = response['result']
+        # send and handle authorize message  
+        sock.sendall(b'{"params": ["'+address.encode()+b'", "123"], "id": 2, "method": "mining.authorize"}\n')
+        response = b''
+        
+        while(True):
+            recv_payload = sock.recv(5120)
+            response += recv_payload
+            print(recv_payload)
+            if(response.decode().endswith("true]}")) or (response.decode().endswith("false]}")):
+                break
+        print(response)
+        responses = [json.loads(res) for res in response.decode().split('\n') if len(res.strip())>0 and 'mining.notify' in res]
+        ctx.job_id, ctx.prevhash, ctx.coinb1, ctx.coinb2, ctx.merkle_branch, ctx.version, ctx.nbits, ctx.ntime, ctx.clean_jobs = responses[0]['params']
+        print("Start mining!")
+        print("======= Job Information =======")
+        print(f"job_id : {ctx.job_id}")
+        print(f"prev_hash : {ctx.prevhash}")
+        print(f"coinbase1 : {ctx.coinb1}")
+        print(f"coinbase2 : {ctx.coinb2}")
+        print(f"merkle_branch : {ctx.merkle_branch}")
+        print(f"version : {ctx.version}")
+        print(f"nbits : {ctx.nbits}")
+        print(f"ntime : {ctx.ntime}")
+        print(f"clean_jobs : {ctx.clean_jobs}")
+        # do this one time, will be overwriten by mining loop when new block is detected
+        ctx.updatedPrevHash = ctx.prevhash
+        # set sock 
+        ctx.sock = sock 
+        working_now = True
 
 
         # check for new block 
         response = b''
-        while response.count(b'\n') < 4 and not(b'mining.notify' in response):response += sock.recv(1024)
+        while response.count(b'\n') < 4 and not(b'mining.notify' in response):response += sock.recv(5120)
+        print(response)
         responses = [json.loads(res) for res in response.decode().split('\n') if len(res.strip())>0 and 'mining.notify' in res]     
 
         if responses[0]['params'][1] != ctx.prevhash:
@@ -316,7 +307,7 @@ class NewSubscribeThread(ExitedThread):
         ctx.listfThreadRunning[self.n] = True
         check_for_shutdown(self)
         try:
-            ret = block_listener(self)
+            ret = block_listener()
         except Exception as e:
             logg("[*] Subscribe thread()")
             logg(e)
@@ -330,14 +321,10 @@ class NewSubscribeThread(ExitedThread):
 
 
 def StartMining():
-    subscribe_t = NewSubscribeThread(None)
-    subscribe_t.start()
+    block_listener()
     logg("[*] Subscribe thread started.")
 
-    time.sleep(4)
-
-    miner_t = CoinMinerThread(None)
-    miner_t.start()
+    bitcoin_miner()
     logg("[*] Bitcoin miner thread started")
 
     print('Bitcoin Miner started')
