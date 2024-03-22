@@ -1,0 +1,1 @@
+python solo_miner.py 1NRDyoKLw7j5ghdpbAYgvE7SHwiSCa6kPs 18
